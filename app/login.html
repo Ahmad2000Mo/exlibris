@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Brot &amp; Butter - Login (Studenten-Version)</title>
+  <title>ExLibris – Mitarbeiter-Login</title>
   <link rel="stylesheet" href="login.css">
   <script src="login.js" defer></script>
 </head>
@@ -16,11 +16,9 @@
     </div>
 
     <!-- Fehlermeldung bei falschem Login -->
-    <div id="errorBanner" class="error-banner">
-      ⚠️ Benutzername oder Passwort ist falsch!
-    </div>
+    <div id="errorBanner" class="error-banner" role="alert"></div>
 
-    <form action="login" method="POST">
+    <form action="login" method="post">
       <div class="form-group">
         <label for="user">Benutzername:</label>
         <input type="text" id="user" name="user" required autocomplete="username">
