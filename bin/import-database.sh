@@ -1,38 +1,13 @@
 #!/usr/bin/env bash
-# set -x
-source local/config.txt || exit 1
+# Setzt die Datenbank komplett zurueck: Schema, 1000 Testbuecher, Beispiel-Ausleihen.
+source "$(dirname "$0")/lib.sh"
+load_config
 
-echo "Verbindung zur Hopper-Datenbank wird hergestellt..."
-echo "1. Zurücksetzen des Schemas (createdb.sql)..."
-
-if [ "$(uname -n)" = hopper ] || [ -f /etc/debian_version ]; then
-  # Running directly on Hopper or inside container
-  mariadb -h "${dbserver}" -u "${dbuser}" -p"${dbpassword}" "${dbname}" < createdb.sql
-else
-  # Running locally on Mac
-  ssh hopper "mariadb -h ${dbserver} -u ${dbuser} -p'${dbpassword}' ${dbname}" < createdb.sql
-fi
-
-if [ $? -eq 0 ]; then
-  echo "Schema erfolgreich zurückgesetzt."
-else
-  echo "Fehler beim Zurücksetzen des Schemas!" >&2
-  exit 1
-fi
-
-echo "2. Importieren der 1000 Testbücher (mock_books.sql)..."
-
-if [ "$(uname -n)" = hopper ] || [ -f /etc/debian_version ]; then
-  # Running directly on Hopper or inside container
-  mariadb -h "${dbserver}" -u "${dbuser}" -p"${dbpassword}" "${dbname}" < mock_books.sql
-else
-  # Running locally on Mac
-  ssh hopper "mariadb -h ${dbserver} -u ${dbuser} -p'${dbpassword}' ${dbname}" < mock_books.sql
-fi
-
-if [ $? -eq 0 ]; then
-  echo "Erfolgreich 1000 Bücher, Autoren und Exemplare importiert!"
-else
-  echo "Fehler beim Importieren der Testdaten!" >&2
-  exit 1
-fi
+for file in createdb.sql mock_books.sql testdata.sql; do
+  echo "Spiele $file ein..."
+  if ! run_sql < "$file"; then
+    echo "Fehler beim Einspielen von $file" >&2
+    exit 1
+  fi
+done
+echo "Datenbank bereit (Login: admin / admin, Mitglieder M10001-M10003, Exemplare 100-102 und 200000-200999)."

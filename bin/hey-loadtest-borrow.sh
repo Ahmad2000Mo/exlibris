@@ -1,28 +1,20 @@
 #!/usr/bin/env bash
-# Load test for checkExemplar in BorrowServlet using 'hey' on Hopper
-
-source local/config.txt || exit 1
-path="$baseurl/$webapp"
+# Lasttest des Endpunkts checkExemplar mit "hey" (2000 Requests, 20 parallel).
+source "$(dirname "$0")/lib.sh"
+load_config
 mkdir -p tmp
-
 cookie=tmp/cookie-$$.jar
+trap 'rm -f "$cookie"' EXIT
 
-# 1. Login to get session
-curl -s -c "$cookie" "$path/login?user=admin&passwd=admin" > /dev/null
-jsessionid=$(grep -o "[A-Z0-9]*$" < "$cookie")
-
+csrf=$(app_login "$cookie")
+jsessionid=$(awk '$6 == "JSESSIONID" {print $7}' "$cookie")
 if [ -z "$jsessionid" ]; then
-    echo "Login failed, no JSESSIONID cookie found!"
-    exit 1
+  echo "Login fehlgeschlagen, kein JSESSIONID-Cookie" >&2
+  exit 1
 fi
 
-echo "Login erfolgreich. Session-ID: $jsessionid"
-echo "Starte Lasttest auf checkExemplar mit 2000 Requests (Concurrency = 20)..."
+echo "Starte Lasttest auf checkExemplar (2000 Requests, Concurrency 20)..."
+hey -n 2000 -c 20 -H "Cookie: JSESSIONID=$jsessionid" "$apppath/borrow?action=checkExemplar&code=200005"
 
-# 2. Run hey load test
-hey -n 2000 -c 20 -H "Cookie: JSESSIONID=$jsessionid" "$path/borrow?action=checkExemplar&code=200005"
-
-# 3. Logout
-curl -s -b "$cookie" "$path/logout" > /dev/null
-rm -f "$cookie"
-echo "Lasttest beendet und abgemeldet."
+curl -s -o /dev/null -b "$cookie" -H "X-CSRF-Token: $csrf" -X POST "$apppath/logout"
+echo "Lasttest beendet."

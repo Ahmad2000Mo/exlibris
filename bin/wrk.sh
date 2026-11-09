@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-source local/config.txt || exit 1
-action="$1"
-connections="$2"
-duration="$3"
-[ "$1" = "" ] && action=hello
-[ "$2" = "" ] && connections=100
-[ "$3" = "" ] && duration=5
-threads=$((connections/10))
-[ "$threads" = 0 ] && threads=1
-wrk -d "$duration" -c "$connections" -t "$threads" "$baseurl/$webapp/$action"
+# Einfacher Lasttest mit wrk.
+#   bin/wrk.sh [pfad] [verbindungen] [sekunden]   (Standard: session-status 100 5)
+source "$(dirname "$0")/lib.sh"
+load_config
+action="${1:-session-status}"
+connections="${2:-100}"
+duration="${3:-5}"
+threads=$((connections / 10))
+[ "$threads" -eq 0 ] && threads=1
+wrk -d "$duration" -c "$connections" -t "$threads" "$apppath/$action"
