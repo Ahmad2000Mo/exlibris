@@ -4,33 +4,33 @@
 .idea/
 .vscode/
 *.iml
-# Build directories
+
+# Build-Ergebnisse
 /build/
 /target/
+/test-classes/
 /tmp/
 out/
-# App temporary / generated files
+*.class
+*.war
+
+# Laufzeit-Dateien
 /printed_receipts/
 /app/latency_plot.png
-# Sensitive data / Local configurations (contains DB/Redis passwords)
+*.log
+hs_err_pid*
+replay_pid*
+
+# Zugangsdaten (DB/Redis-Passwoerter) -- niemals committen
 /local/
 
-# Compiled class file
-*.class
-# Log file
-*.log
-# BlueJ files
-*.ctxt
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
-# Package Files #
+# Bibliotheken: nur die bewusst eingecheckten (kein Build-Tool im Projekt)
 *.jar
-*.war
-*.nar
-*.ear
+!/lib/*.jar
+!/lib/test/*.jar
+!/app/WEB-INF/lib/*.jar
+
+# Archive
 *.zip
 *.tar.gz
 *.rar
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
