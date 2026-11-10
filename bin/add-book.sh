@@ -1,63 +1,42 @@
 #!/usr/bin/env bash
-
-# Source local configuration
-if [ -f local/config.txt ]; then
-  source local/config.txt
-elif [ -f ~/brotundbutter-sessions-redis-mariadb/local/config.txt ]; then
-  source ~/brotundbutter-sessions-redis-mariadb/local/config.txt
-else
-  echo "Configuration file local/config.txt not found!" >&2
-  exit 1
-fi
+# Legt ein Buch an, optional mit einem Exemplar.
+#   bin/add-book.sh "<Titel>" "<Autor/in>" [Barcode]
+source "$(dirname "$0")/lib.sh"
+load_config
 
 titel="$1"
 autor="$2"
 code="$3"
 
 if [ -z "$titel" ] || [ -z "$autor" ]; then
-  echo "Usage: $0 <Buchtitel> <Autor/in> [Barcode]" >&2
+  echo "Aufruf: $0 <Buchtitel> <Autor/in> [Barcode]" >&2
+  exit 1
+fi
+if [ -n "$code" ] && ! [[ "$code" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Barcode muss eine positive Zahl sein" >&2
   exit 1
 fi
 
-# Escape single quotes for SQL safety (e.g. Janson's -> Janson''s)
-safe_titel=$(echo "$titel" | sed "s/'/''/g")
-safe_autor=$(echo "$autor" | sed "s/'/''/g")
+safe_titel=$(sql_escape "$titel")
+safe_autor=$(sql_escape "$autor")
 
-# Build the SQL script inside a transaction
-SQL=$(cat <<EOF
-START TRANSACTION;
-INSERT INTO BIB_Autorin (name) SELECT '$safe_autor' FROM dual WHERE NOT EXISTS (SELECT 1 FROM BIB_Autorin WHERE name = '$safe_autor');
-INSERT INTO BIB_Buch (titel) VALUES ('$safe_titel');
-SET @buch_id = LAST_INSERT_ID();
-SET @autor_id = (SELECT id FROM BIB_Autorin WHERE name = '$safe_autor' LIMIT 1);
-INSERT INTO BIB_Autorin_Buch (autorin_id, buch_id) VALUES (@autor_id, @buch_id);
-EOF
-)
-
+sql="start transaction;
+insert into BIB_Autorin (name) values ('$safe_autor') on duplicate key update id = last_insert_id(id);
+set @autor_id = last_insert_id();
+insert into BIB_Buch (titel) values ('$safe_titel');
+set @buch_id = last_insert_id();
+insert into BIB_Autorin_Buch (autorin_id, buch_id) values (@autor_id, @buch_id);"
 if [ -n "$code" ]; then
-  SQL=$(cat <<EOF
-$SQL
-INSERT INTO BIB_Buchexemplar (code, buch_id) VALUES ($code, @buch_id);
-EOF
-)
+  sql="$sql
+insert into BIB_Buchexemplar (code, buch_id) values ($code, @buch_id);"
 fi
+sql="$sql
+commit;"
 
-SQL="$SQL
-COMMIT;"
-
-echo "Adding book '$titel' by '$autor'..."
-
-if [ "$(uname -n)" = hopper ] || [ -f /etc/debian_version ]; then
-  # Running directly on Hopper or inside mydocker container
-  echo "$SQL" | mariadb -h "${dbserver}" -u "${dbuser}" -p"${dbpassword}" "${dbname}"
+echo "Lege '$titel' von '$autor' an..."
+if echo "$sql" | run_sql; then
+  echo "Buch angelegt."
 else
-  # Running locally on Mac -> execute remotely on mydocker
-  echo "$SQL" | ssh mydocker "mariadb -h ${dbserver} -u ${dbuser} -p'${dbpassword}' ${dbname}"
-fi
-
-if [ $? -eq 0 ]; then
-  echo "Book successfully added to database!"
-else
-  echo "Failed to add book." >&2
+  echo "Fehler beim Anlegen." >&2
   exit 1
 fi

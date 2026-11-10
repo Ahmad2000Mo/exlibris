@@ -3,116 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Brot &amp; Butter - Mitarbeiter Dashboard (Studenten-Version)</title>
+  <title>ExLibris – Bibliothek Brot &amp; Butter</title>
   <link rel="stylesheet" href="index.css">
 </head>
 <body>
-  <div class="container">
+  <main class="container">
+    <h1>📚 ExLibris</h1>
+    <p class="subtitle">Bibliotheksverwaltung der Bibliothek <strong>Brot &amp; Butter</strong></p>
 
-  <h1>Brot &amp; Butter Bib - Mitarbeiter Dashboard</h1>
+    <ul class="features">
+      <li>📥 Ausleihe per Mitgliedsausweis und Exemplar-Barcode</li>
+      <li>📤 Rückgabe mit Anzeige überfälliger Medien</li>
+      <li>🧾 Automatischer Belegdruck über eine Redis-Warteschlange</li>
+    </ul>
 
-  <!-- Status-Rückmeldung (Erfolg/Fehler) -->
-  <div id="statusMessage" style="border: 2px solid black; padding: 10px; margin-bottom: 20px; display: none;"></div>
-
-  <!-- Benutzer-Panel -->
-  <p>
-    👤 Angemeldet als: <strong id="currentUserDisplay">Lade...</strong>
-    | <button id="logoutBtn">Abmelden</button>
-  </p>
-
-  <hr>
-
-  <!-- Bereichsauswahl -->
-  <p>
-    <strong>Bereich auswählen:</strong>
-    <button id="tabBorrowBtn" style="font-weight: bold;">📥 Buchausleihe (Ausleihe)</button>
-    <button id="tabReturnBtn">📤 Buchrückgabe (Rückgabe)</button>
-  </p>
-
-  <hr>
-
-  <!-- ================= USE CASE: BORROW ================= -->
-  <div id="borrowView">
-    <h2>📥 Neue Buchausleihe erfassen</h2>
-
-    <!-- Step 1: Scan Member -->
-    <div id="borrowMemberSection">
-      <h3>1. Mitgliedsausweis einscannen</h3>
-      <p><em>(Scanner-Simulation: Code eingeben und Enter drücken oder auf Prüfen klicken)</em></p>
-      <p>
-        <label for="borrowMemberInput">Mitgliedsnummer / Barcode: </label>
-        <input type="text" id="borrowMemberInput" placeholder="z. B. M10001" autocomplete="off">
-        <button id="btnCheckMember">Prüfen</button>
-      </p>
-    </div>
-
-    <!-- Active Member Panel -->
-    <div id="activeMemberCard" style="display: none;">
-      <p>
-        <strong>Aktiver Leser:</strong> <span id="activeMemberName">Max Mustermann (M10001)</span>
-        <button id="btnResetMember">Anderen Leser wählen</button>
-      </p>
-    </div>
-
-    <!-- Step 2: Scan Books (Visible only when member is validated) -->
-    <div id="borrowBookSection" style="display: none;">
-      <hr>
-      <h3>2. Buchexemplare erfassen</h3>
-      <p><em>(Scanner-Simulation: Exemplar-Barcode eingeben und Enter drücken oder auf Hinzufügen klicken)</em></p>
-      <p>
-        <label for="borrowBookInput">Exemplar-Barcode: </label>
-        <input type="text" id="borrowBookInput" placeholder="z. B. 100" autocomplete="off">
-        <button id="btnAddBookToBorrow">Hinzufügen</button>
-      </p>
-    </div>
-
-    <!-- Scanned Books List -->
-    <div id="borrowListSection" style="display: none;">
-      <hr>
-      <h3>Eingelesene Exemplare (<span id="borrowCount">0</span>)</h3>
-      <ul id="borrowItemsList">
-        <!-- Dynamisch befüllt -->
-      </ul>
-      <p>
-        <button id="btnConfirmBorrow" style="padding: 10px 20px; font-weight: bold;">Ausleihe bestätigen &amp; buchen</button>
-      </p>
-    </div>
-
-    <div id="borrowEmptyState">
-      <p><em>Bitte scannen Sie zuerst einen Mitgliedsausweis, um mit der Erfassung der Bücher zu beginnen.</em></p>
-    </div>
-  </div>
-
-  <!-- ================= USE CASE: RETURN ================= -->
-  <div id="returnView" style="display: none;">
-    <h2>📤 Buchrückgabe abwickeln</h2>
-    <p><em>(Scanner-Simulation: Exemplar-Barcode eingeben und Enter drücken oder auf Prüfen klicken)</em></p>
-    <p>
-      <label for="returnBookInput">Rückgabe-Exemplar scannen: </label>
-      <input type="text" id="returnBookInput" placeholder="z. B. 100" autocomplete="off">
-      <button id="btnCheckReturnBook">Prüfen &amp; Scannen</button>
-    </p>
-
-    <!-- Return List Section -->
-    <div id="returnListSection" style="display: none;">
-      <hr>
-      <h3>Zu buchende Rückgaben (<span id="returnCount">0</span>)</h3>
-      <ul id="returnItemsList">
-        <!-- Dynamisch befüllt -->
-      </ul>
-      <p>
-        <button id="btnConfirmReturn" style="padding: 10px 20px; font-weight: bold;">Rückgabe bestätigen &amp; verbuchen</button>
-      </p>
-    </div>
-
-    <div id="returnEmptyState">
-      <p><em>Scannen Sie die zurückgegebenen Buchexemplare nacheinander ein.</em></p>
-    </div>
-  </div>
-
-
-  </div>
-
-  <script src="index.js" defer></script>
+    <a class="button" href="login.html">Zum Mitarbeiter-Login</a>
+  </main>
 </body>
 </html>

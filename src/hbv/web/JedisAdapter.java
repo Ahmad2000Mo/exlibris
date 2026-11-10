@@ -29,19 +29,29 @@ public class JedisAdapter {
           poolConfig.setBlockWhenExhausted(true);
           poolConfig.setMaxWait(Duration.ofMillis(3000));
 
-          JedisClientConfig clientConfig = DefaultJedisClientConfig.builder()
-            .password(password)
-            .timeoutMillis(2000)
-            .build();
+          DefaultJedisClientConfig.Builder clientConfig = DefaultJedisClientConfig.builder()
+            .timeoutMillis(2000);
+          // Redis ohne Passwort (z. B. lokal) -> kein AUTH senden
+          if (password != null && !password.isEmpty()) {
+            clientConfig.password(password);
+          }
 
           redisClient = RedisClient.builder()
             .poolConfig(poolConfig)
             .hostAndPort(host, port)
-            .clientConfig(clientConfig)
+            .clientConfig(clientConfig.build())
             .build();
         }
       }
     }
+  }
+
+  /** Port aus der Konfiguration; leer oder nicht ersetzter Platzhalter -> Standardport 6379. */
+  public static int parsePort(String value) {
+    if (value == null || value.isBlank() || value.startsWith("REDIS")) {
+      return 6379;
+    }
+    return Integer.parseInt(value.trim());
   }
 
   public static RedisClient getClient() {
@@ -61,5 +71,3 @@ public class JedisAdapter {
     }
   }
 }
-
-

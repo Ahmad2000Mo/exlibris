@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Unit-Tests & Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Unit-Tests (JUnit 5)
+        run: bin/test.sh
+      - name: Shellcheck
+        run: bin/shellcheck-all.sh
+
+  integration:
+    name: End-to-End (Tomcat + MariaDB + Redis)
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_DATABASE: exlibris
+          MARIADB_USER: exlibris
+          MARIADB_PASSWORD: ci-password
+          MARIADB_ROOT_PASSWORD: ci-root
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: --health-cmd="redis-cli ping" --health-interval=5s --health-retries=10
+    env:
+      TOMCAT_VERSION: 10.1.34
+      MARIADB_DRIVER_VERSION: 3.4.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: MariaDB-Client installieren
+        run: sudo apt-get update -q && sudo apt-get install -y -q mariadb-client
+
+      - name: Konfiguration anlegen
+        run: |
+          mkdir -p local
+          sed -e 's/^dbpassword=.*/dbpassword=ci-password/' config.example.txt > local/config.txt
+
+      - name: Datenbank einspielen
+        run: bin/import-database.sh
+
+      - name: Bauen
+        run: bin/build.sh --no-deploy
+
+      - name: Tomcat starten
+        run: |
+          curl -sSfL -o tomcat.tgz "https://repo1.maven.org/maven2/org/apache/tomcat/tomcat/$TOMCAT_VERSION/tomcat-$TOMCAT_VERSION.tar.gz"
+          mkdir tomcat && tar xzf tomcat.tgz -C tomcat --strip-components=1
+          curl -sSfL -o tomcat/lib/mariadb-java-client.jar \
+            "https://repo1.maven.org/maven2/org/mariadb/jdbc/mariadb-java-client/$MARIADB_DRIVER_VERSION/mariadb-java-client-$MARIADB_DRIVER_VERSION.jar"
+          cp target/webapp.war tomcat/webapps/exlibris.war
+          tomcat/bin/startup.sh
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8080/exlibris/session-status && exit 0
+            sleep 1
+          done
+          cat tomcat/logs/catalina.out
+          exit 1
+
+      - name: Rauchtest (Login, Ausleihe, Rueckgabe, CSRF, Logout)
+        run: bin/check.sh
+
+      - name: PrintDaemon verarbeitet die Belege
+        run: |
+          timeout 10 bin/run-print-daemon.sh || true
+          ls -l printed_receipts
+          test "$(ls printed_receipts | wc -l)" -ge 2
+
+      - name: Tomcat-Log bei Fehler
+        if: failure()
+        run: cat tomcat/logs/catalina.out || true

@@ -1,0 +1,26 @@
+# Vorlage fuer local/config.txt bei lokaler Entwicklung.
+#   mkdir -p local && cp config.example.txt local/config.txt
+# An der Hochschule erzeugt bin/configure.sh diese Datei automatisch.
+
+# Webanwendung (Tomcat). Ohne "manager" baut bin/build.sh nur das WAR, ohne es hochzuladen.
+baseurl=http://localhost:8080
+webapp=exlibris
+manager=
+
+# Datenbank (MariaDB)
+dbserver=127.0.0.1
+dbname=exlibris
+dbuser=exlibris
+dbpassword=bitte-aendern
+
+# Redis
+redisserver=127.0.0.1
+redisport=6379
+redispassword=
+
+# Zugang fuer Test- und Lasttest-Skripte (siehe createdb.sql)
+appuser=admin
+apppassword=admin
+
+# Leer = mariadb lokal aufrufen; sonst Rechnername fuer "ssh <host> mariadb ..."
+sshhost=

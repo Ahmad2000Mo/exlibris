@@ -3,7 +3,7 @@
 # pre-receive hook to check Java formatting on pushed commits
 errors=0
 
-while read oldrev newrev refname; do
+while read -r oldrev newrev refname; do
     # Only check branch updates (pushes to branches)
     if [[ "$refname" =~ ^refs/heads/ ]]; then
         # Get list of Java files modified/added in this push

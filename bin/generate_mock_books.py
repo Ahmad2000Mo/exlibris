@@ -49,15 +49,10 @@ def main():
     # Generate SQL file
     sql_file = 'mock_books.sql'
     with open(sql_file, 'w', encoding='utf-8') as f:
-        f.write("-- Mock Book Data Generated from Open Library\n\n")
-        
-        # Disable foreign key checks and clear existing entries to prevent duplicate primary keys
-        f.write("SET FOREIGN_KEY_CHECKS = 0;\n")
-        f.write("TRUNCATE TABLE BIB_Autorin_Buch;\n")
-        f.write("TRUNCATE TABLE BIB_Buchexemplar;\n")
-        f.write("TRUNCATE TABLE BIB_Autorin;\n")
-        f.write("TRUNCATE TABLE BIB_Buch;\n")
-        f.write("SET FOREIGN_KEY_CHECKS = 1;\n\n")
+        f.write("-- Mock Book Data Generated from Open Library (bin/generate_mock_books.py)\n")
+        # Kein TRUNCATE mit abgeschalteten Fremdschluesseln mehr: das hat bestehende Ausleihen
+        # auf falsche Exemplare zeigen lassen. Die Tabellen werden vorher von createdb.sql neu angelegt.
+        f.write("-- Erwartet frisch angelegte, leere Tabellen (createdb.sql).\n\n")
         
         # Insert unique authors
         f.write("-- Inserting Authors\n")

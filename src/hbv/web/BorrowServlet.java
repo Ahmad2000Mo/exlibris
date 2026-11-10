@@ -1,136 +1,84 @@
 package hbv.web;
 
-import java.io.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 import java.sql.SQLException;
-import java.util.ArrayList;
 import java.util.List;
-import jakarta.servlet.*;
-import jakarta.servlet.http.*;
-import javax.naming.*;
-import javax.sql.*;
-import redis.clients.jedis.RedisClient;
 
-public class BorrowServlet extends HttpServlet {
-    private LibraryDao dao;
-
-    @Override
-    public void init() throws ServletException {
-        try {
-            Context initCtx = new InitialContext();
-            DataSource ds = (DataSource) initCtx.lookup("java:/comp/env/jdbc/mariadb");
-            this.dao = new LibraryDao(ds);
-        } catch (NamingException e) {
-            throw new ServletException("JNDI Lookup fehlgeschlagen", e);
-        }
-    }
+/**
+ * Ausleihe.
+ *
+ * GET  /borrow?action=checkMember&code=M10001   -> Mitglied pruefen
+ * GET  /borrow?action=checkExemplar&code=100    -> Exemplar pruefen (existiert, frei?)
+ * POST /borrow  memberCode=M10001&exemplarCodes=100,101 -> Ausleihe buchen
+ */
+public class BorrowServlet extends ApiServlet {
+    private static final long serialVersionUID = 1L;
 
     @Override
-    protected void doGet(HttpServletRequest request, HttpServletResponse response)
-            throws IOException, ServletException {
-
-        HttpSession session = request.getSession(false);
-        if (session == null || session.getAttribute("user") == null) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.getWriter().print("{\"success\":false,\"message\":\"Nicht autorisiert\"}");
-            return;
-        }
-
-        response.setContentType("application/json");
-        response.setCharacterEncoding("UTF-8");
-        PrintWriter out = response.getWriter();
-
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
         String action = request.getParameter("action");
         String code = request.getParameter("code");
+        try {
+            if ("checkMember".equals(action)) {
+                if (code == null || code.isBlank()) {
+                    throw new LibraryException("Mitgliedscode darf nicht leer sein.");
+                }
+                LibraryDao.Member member = dao.findMember(code.trim());
+                if (member == null) {
+                    sendError(response, HttpServletResponse.SC_NOT_FOUND, "Mitglied nicht gefunden.");
+                    return;
+                }
+                sendOk(response, Json.obj("success", true, "code", member.code(), "name", member.name()));
 
-        if ("checkMember".equals(action)) {
-            try {
-                LibraryDao.MemberInfo member = dao.checkMember(code);
-                if (member != null) {
-                    out.print("{\"success\":true,\"name\":\"" + JsonHelper.escape(member.name) + "\",\"code\":\"" + JsonHelper.escape(member.code) + "\"}");
+            } else if ("checkExemplar".equals(action)) {
+                LibraryDao.Exemplar ex = dao.findExemplar(parseCode(code));
+                if (ex == null) {
+                    sendError(response, HttpServletResponse.SC_NOT_FOUND, "Exemplar nicht gefunden.");
+                } else if (ex.borrowed()) {
+                    sendError(response, HttpServletResponse.SC_CONFLICT, "Dieses Exemplar ist bereits verliehen.");
                 } else {
-                    out.print("{\"success\":false,\"message\":\"Mitglied nicht gefunden\"}");
+                    sendOk(response, Json.obj("success", true, "code", ex.code(),
+                                              "title", ex.title(), "author", ex.author()));
                 }
-            } catch (SQLException e) {
-                out.print("{\"success\":false,\"message\":\"Datenbankfehler: " + JsonHelper.escape(e.getMessage()) + "\"}");
+
+            } else {
+                sendError(response, HttpServletResponse.SC_BAD_REQUEST, "Ungültige Aktion.");
             }
-        } else if ("checkExemplar".equals(action)) {
-            if (code == null || code.trim().isEmpty()) {
-                out.print("{\"success\":false,\"message\":\"Code darf nicht leer sein\"}");
-                return;
-            }
-            try {
-                int barcode = Integer.parseInt(code.trim());
-                LibraryDao.ExemplarInfo exemplar = dao.checkExemplar(barcode);
-                if (exemplar != null) {
-                    if (exemplar.isBorrowed) {
-                        out.print("{\"success\":false,\"message\":\"Dieses Exemplar ist bereits verliehen\"}");
-                    } else {
-                        out.print("{\"success\":true,\"code\":" + exemplar.code + ",\"title\":\"" + JsonHelper.escape(exemplar.title) + "\",\"author\":\"" + JsonHelper.escape(exemplar.author) + "\"}");
-                    }
-                } else {
-                    out.print("{\"success\":false,\"message\":\"Exemplar nicht gefunden\"}");
-                }
-            } catch (NumberFormatException e) {
-                out.print("{\"success\":false,\"message\":\"Ungültiges Barcode-Format\"}");
-            } catch (SQLException e) {
-                out.print("{\"success\":false,\"message\":\"Datenbankfehler: " + JsonHelper.escape(e.getMessage()) + "\"}");
-            }
-        } else {
-            out.print("{\"success\":false,\"message\":\"Ungültige Aktion\"}");
+        } catch (LibraryException e) {
+            sendError(response, HttpServletResponse.SC_BAD_REQUEST, e.getMessage());
+        } catch (SQLException e) {
+            sendServerError(response, "Fehler bei Ausleihe-Abfrage", e);
         }
     }
 
     @Override
-    protected void doPost(HttpServletRequest request, HttpServletResponse response)
-            throws IOException, ServletException {
-
-        HttpSession session = request.getSession(false);
-        if (session == null || session.getAttribute("user") == null) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.getWriter().print("{\"success\":false,\"message\":\"Nicht autorisiert\"}");
-            return;
-        }
-
-        response.setContentType("application/json");
-        response.setCharacterEncoding("UTF-8");
-        PrintWriter out = response.getWriter();
-
-        String memberCode = request.getParameter("memberCode");
-        String exemplarCodesStr = request.getParameter("exemplarCodes");
-
-        if (memberCode == null || memberCode.trim().isEmpty() || exemplarCodesStr == null || exemplarCodesStr.trim().isEmpty()) {
-            out.print("{\"success\":false,\"message\":\"Fehlende Parameter\"}");
-            return;
-        }
-
-        String[] exemplarCodes = exemplarCodesStr.split(",");
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
         try {
-            LibraryDao.BorrowResult result = dao.executeBorrowTransaction(memberCode, exemplarCodes);
+            String memberCode = request.getParameter("memberCode");
+            if (memberCode == null || memberCode.isBlank()) {
+                throw new LibraryException("Kein Mitglied angegeben.");
+            }
+            List<Integer> codes = parseCodeList(request.getParameter("exemplarCodes"));
 
-            // Push print job to Redis
+            LibraryDao.BorrowResult result = dao.borrow(memberCode.trim(), codes);
+
             long timestamp = System.currentTimeMillis() / 1000;
-            List<String> itemsDetailsJson = new ArrayList<>();
-            for (LibraryDao.BorrowedBook book : result.books) {
-                itemsDetailsJson.add(String.format("{\"code\":\"%s\",\"title\":\"%s\",\"author\":\"%s\"}",
-                        JsonHelper.escape(book.code), JsonHelper.escape(book.title), JsonHelper.escape(book.author)));
-            }
-            String itemsList = String.join(",", itemsDetailsJson);
-            String printCommandJson = String.format(
-                "{\"commandType\":\"BORROW\",\"memberCode\":\"%s\",\"memberName\":\"%s\",\"timestamp\":%d,\"items\":[%s]}",
-                JsonHelper.escape(result.memberCode), JsonHelper.escape(result.memberName), timestamp, itemsList
-            );
+            boolean printed = PrintQueue.enqueue(List.of(PrintQueue.borrowJob(result, timestamp)));
 
-            try {
-                RedisClient redis = JedisAdapter.getClient();
-                redis.lpush("print_queue", printCommandJson);
-            } catch (Exception e) {
-                System.err.println("Fehler beim Senden des Druckauftrags: " + e.getMessage());
-            }
+            sendOk(response, Json.obj(
+                "success", true,
+                "printed", printed,
+                "dueDate", result.dueDate().toLocalDate().toString(),
+                "message", printed
+                    ? "Ausleihe gebucht, Beleg wird gedruckt."
+                    : "Ausleihe gebucht, aber der Beleg konnte NICHT gedruckt werden."));
 
-            out.print("{\"success\":true,\"message\":\"Ausleihe erfolgreich durchgeführt\"}");
-
-        } catch (Exception e) {
-            out.print("{\"success\":false,\"message\":\"Fehler bei Ausleihe: " + JsonHelper.escape(e.getMessage()) + "\"}");
+        } catch (LibraryException e) {
+            sendError(response, HttpServletResponse.SC_CONFLICT, e.getMessage());
+        } catch (SQLException e) {
+            sendServerError(response, "Fehler bei Ausleihe-Buchung", e);
         }
     }
 }

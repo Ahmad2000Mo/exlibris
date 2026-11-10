@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
+# Laedt zusaetzliche Zufallsbuecher von fakerapi.it in die Datenbank.
+#   bin/populate-mock.sh [anzahl]   (Standard: 10)
+source "$(dirname "$0")/lib.sh"
+load_config
 
-# Source configuration
-if [ -f local/config.txt ]; then
-  source local/config.txt
-elif [ -f ~/brotundbutter-sessions-redis-mariadb/local/config.txt ]; then
-  source ~/brotundbutter-sessions-redis-mariadb/local/config.txt
-else
-  echo "Configuration file local/config.txt not found!" >&2
+quantity="${1:-10}"
+if ! [[ "$quantity" =~ ^[0-9]+$ ]]; then
+  echo "Anzahl muss eine Zahl sein" >&2
   exit 1
 fi
 
-quantity="$1"
-if [ -z "$quantity" ]; then
-  quantity=10
-fi
+echo "Hole $quantity Buecher von fakerapi.it..."
 
-echo "Fetching $quantity mock books from fakerapi.it..."
+# jq baut das SQL; einfache Anfuehrungszeichen und Backslashes werden escaped.
+# Die Barcodes kommen aus den letzten 8 Stellen der ISBN; "insert ignore" ueberspringt Kollisionen.
+# shellcheck disable=SC2016
+curl -sf "https://fakerapi.it/api/v1/books?_quantity=${quantity}" | jq -r '
+  def q: gsub("\\\\"; "\\\\") | gsub("'\''"; "'\'''\''") | "'\''" + . + "'\''";
+  .data[] | "
+start transaction;
+insert into BIB_Autorin (name) values (" + (.author|q) + ") on duplicate key update id = last_insert_id(id);
+set @autor_id = last_insert_id();
+insert into BIB_Buch (titel) values (" + (.title|q) + ");
+set @buch_id = last_insert_id();
+insert into BIB_Autorin_Buch (autorin_id, buch_id) values (@autor_id, @buch_id);
+insert ignore into BIB_Buchexemplar (code, buch_id) values (" + (.isbn[-8:] | tonumber | tostring) + ", @buch_id);
+commit;"' | run_sql
 
-# Perform API call, parse with jq, escape single quotes (replacing ' with ''), and pipe to MariaDB via SSH
-curl -s "https://fakerapi.it/api/v1/books?_quantity=${quantity}" | jq -r '.data[] | "
-START TRANSACTION;
-INSERT INTO BIB_Autorin (name) SELECT '\''" + (.author | gsub("'\''"; "'\'''\''")) + "'\'' FROM dual WHERE NOT EXISTS (SELECT 1 FROM BIB_Autorin WHERE name = '\''" + (.author | gsub("'\''"; "'\'''\''")) + "'\'');
-INSERT INTO BIB_Buch (titel) VALUES ('\''" + (.title | gsub("'\''"; "'\'''\''")) + "'\'');
-SET @buch_id = LAST_INSERT_ID();
-SET @autor_id = (SELECT id FROM BIB_Autorin WHERE name = '\''" + (.author | gsub("'\''"; "'\'''\''")) + "'\'' LIMIT 1);
-INSERT INTO BIB_Autorin_Buch (autorin_id, buch_id) VALUES (@autor_id, @buch_id);
-INSERT INTO BIB_Buchexemplar (code, buch_id) VALUES (" + (.isbn[-8:] | tonumber | tostring) + ", @buch_id);
-COMMIT;
-"' | ssh mydocker "mariadb -h ${dbserver} -u ${dbuser} -p'${dbpassword}' ${dbname}"
-
-if [ $? -eq 0 ]; then
-  echo "Successfully imported $quantity mock books to mydocker database!"
+if [ "${PIPESTATUS[0]}" -eq 0 ] && [ "${PIPESTATUS[2]}" -eq 0 ]; then
+  echo "$quantity Buecher importiert."
 else
-  echo "Failed to import books." >&2
+  echo "Import fehlgeschlagen." >&2
   exit 1
 fi

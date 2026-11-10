@@ -1,117 +1,140 @@
 package hbv.web;
 
-import java.io.*;
-import java.util.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Properties;
+import java.util.UUID;
 import redis.clients.jedis.RedisClient;
+import redis.clients.jedis.args.ListDirection;
 
+/**
+ * Eigenstaendiger Prozess, der Druckauftraege aus Redis abholt und als Textdatei "druckt".
+ *
+ * Zuverlaessige Warteschlange ("reliable queue"):
+ *  - BLMOVE verschiebt einen Auftrag atomar von print_queue nach print_processing.
+ *  - Erst nach erfolgreichem Schreiben der Datei wird er aus print_processing geloescht.
+ *  - Stuerzt der Daemon dazwischen ab, liegt der Auftrag noch in print_processing und wird
+ *    beim naechsten Start wieder in die Warteschlange gelegt. Es geht also nichts verloren.
+ *  - Auftraege, die sich gar nicht verarbeiten lassen (kaputtes JSON), landen in print_failed,
+ *    statt den Daemon in einer Endlosschleife festzuhalten.
+ */
 public class PrintDaemon {
 
-    public static void main(String[] args) {
-        System.out.println("SWE II Print Daemon wird gestartet...");
+    private static volatile boolean running = true;
 
-        // 1. Konfiguration laden
+    public static void main(String[] args) {
         Properties props = new Properties();
-        try (InputStream is = new FileInputStream("local/config.txt")) {
+        String configFile = args.length > 0 ? args[0] : "local/config.txt";
+        try (InputStream is = new FileInputStream(configFile)) {
             props.load(is);
         } catch (IOException e) {
-            System.err.println("Fehler beim Laden von local/config.txt: " + e.getMessage());
+            System.err.println("Fehler beim Laden von " + configFile + ": " + e.getMessage());
             System.exit(1);
         }
 
-        String redisServer = props.getProperty("redisserver", "localhost");
-        String redisPassword = props.getProperty("redispassword", "");
+        String server = props.getProperty("redisserver", "localhost");
+        String password = props.getProperty("redispassword", "");
+        int port = JedisAdapter.parsePort(props.getProperty("redisport"));
+        File printDir = new File(props.getProperty("printdir", "printed_receipts"));
 
-        System.out.println("Verbinde mit Redis auf " + redisServer + "...");
-
-        // 2. Jedis initialisieren
-        try {
-            JedisAdapter.init(redisServer, 6379, redisPassword, 10);
-        } catch (Exception e) {
-            System.err.println("Fehler bei der Initialisierung des Jedis-Adapters: " + e.getMessage());
+        if (!printDir.isDirectory() && !printDir.mkdirs()) {
+            System.err.println("Kann Verzeichnis nicht anlegen: " + printDir.getAbsolutePath());
             System.exit(1);
         }
 
-        // 3. Verzeichnis für Quittungen anlegen
-        File printDir = new File("printed_receipts");
-        if (!printDir.exists()) {
-            printDir.mkdirs();
-        }
-        System.out.println("Quittungen werden in '" + printDir.getAbsolutePath() + "' gespeichert.");
-
+        JedisAdapter.init(server, port, password, 4);
         RedisClient redis = JedisAdapter.getClient();
-        System.out.println("Warte auf Druckaufträge in der Warteschlange 'print_queue'...");
 
-        // 4. Endlosschleife zum Verarbeiten der Warteschlange
-        while (true) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            running = false;
+            System.out.println("Print Daemon wird beendet...");
+        }));
+
+        recoverUnfinishedJobs(redis);
+
+        System.out.println("Print Daemon gestartet. Redis: " + server + ":" + port
+                + ", Belege nach: " + printDir.getAbsolutePath());
+
+        while (running) {
             try {
-                // blockierendes Pop aus der Queue
-                List<String> popped = redis.brpop(0, "print_queue");
-                if (popped != null && popped.size() >= 2) {
-                    String json = popped.get(1);
-                    System.out.println("Empfangener Druckauftrag: " + json);
-                    processPrintJob(json, printDir);
-                }
-            } catch (Exception e) {
-                System.err.println("Fehler im Loop: " + e.getMessage());
-                try {
-                    Thread.sleep(2000); // Bei Fehlern kurz warten, um Log-Spamming zu vermeiden
-                } catch (InterruptedException ie) {
-                    break;
-                }
+                // Timeout 5 s, damit der Daemon regelmaessig 'running' prueft und sauber beendet
+                String job = redis.blmove(PrintQueue.QUEUE, PrintQueue.PROCESSING,
+                                          ListDirection.RIGHT, ListDirection.LEFT, 5.0);
+                if (job == null) continue;
+
+                process(redis, job, printDir);
+            } catch (RuntimeException e) {
+                if (!running) break;
+                System.err.println("Redis-Fehler: " + e.getMessage() + " (neuer Versuch in 2 s)");
+                sleep(2000);
             }
         }
 
         JedisAdapter.destroy();
-        System.out.println("Print Daemon beendet.");
     }
 
-    private static void processPrintJob(String json, File printDir) {
+    /** Legt Auftraege, die beim letzten Lauf mitten in der Bearbeitung waren, zurueck in die Queue. */
+    private static void recoverUnfinishedJobs(RedisClient redis) {
+        int recovered = 0;
+        while (redis.lmove(PrintQueue.PROCESSING, PrintQueue.QUEUE, ListDirection.RIGHT, ListDirection.RIGHT) != null) {
+            recovered++;
+        }
+        if (recovered > 0) {
+            System.out.println(recovered + " unterbrochene(r) Auftrag/Auftraege wieder eingereiht.");
+        }
+    }
+
+    static void process(RedisClient redis, String job, File printDir) {
         try {
-            String commandType = JsonHelper.getString(json, "commandType");
-            String memberCode = JsonHelper.getString(json, "memberCode");
-            String memberName = JsonHelper.getString(json, "memberName");
-            long timestamp = JsonHelper.getLong(json, "timestamp");
+            PrintCommand command = PrintCommand.fromJson(job);
+            Path file = writeReceipt(command, printDir);
+            redis.lrem(PrintQueue.PROCESSING, 1, job);
+            System.out.println("Beleg gedruckt: " + file.getFileName());
+        } catch (IllegalArgumentException e) {
+            // Auftrag ist kaputt -> wird nie funktionieren, also beiseitelegen
+            System.err.println("Ungueltiger Druckauftrag, verschoben nach " + PrintQueue.FAILED + ": " + e.getMessage());
+            redis.lpush(PrintQueue.FAILED, job);
+            redis.lrem(PrintQueue.PROCESSING, 1, job);
+        } catch (IOException e) {
+            // z. B. Platte voll -> Auftrag bleibt in print_processing und wird beim Neustart wiederholt
+            System.err.println("Beleg konnte nicht geschrieben werden: " + e.getMessage());
+            sleep(2000);
+        }
+    }
 
-            PrintCommand command = null;
+    static Path writeReceipt(PrintCommand command, File printDir) throws IOException {
+        // Dateiname eindeutig (UUID) und ohne Sonderzeichen aus Nutzerdaten (kein "../" moeglich)
+        String safeMember = command.memberCode() == null ? "unbekannt"
+                : command.memberCode().replaceAll("[^A-Za-z0-9_-]", "_");
+        String name = String.format("quittung_%d_%s_%s_%s.txt", command.timestamp(), safeMember,
+                command.type(), UUID.randomUUID().toString().substring(0, 8));
+        Path target = printDir.toPath().resolve(name);
+        Path tmp = printDir.toPath().resolve(name + ".tmp");
 
-            if ("BORROW".equals(commandType)) {
-                List<String> itemObjects = JsonHelper.getObjectsInArray(json, "items");
-                List<BorrowReceiptCommand.ItemInfo> items = new ArrayList<>();
-                for (String itemJson : itemObjects) {
-                    String code = JsonHelper.getString(itemJson, "code");
-                    String title = JsonHelper.getString(itemJson, "title");
-                    String author = JsonHelper.getString(itemJson, "author");
-                    items.add(new BorrowReceiptCommand.ItemInfo(code, title, author));
-                }
-                command = new BorrowReceiptCommand(memberCode, memberName, timestamp, items);
-            } else if ("RETURN".equals(commandType)) {
-                List<String> itemObjects = JsonHelper.getObjectsInArray(json, "items");
-                List<ReturnReceiptCommand.ItemInfo> items = new ArrayList<>();
-                for (String itemJson : itemObjects) {
-                    String code = JsonHelper.getString(itemJson, "code");
-                    String title = JsonHelper.getString(itemJson, "title");
-                    String author = JsonHelper.getString(itemJson, "author");
-                    boolean overdue = JsonHelper.getBoolean(itemJson, "overdue");
-                    long overdueDays = JsonHelper.getLong(itemJson, "overdueDays");
-                    items.add(new ReturnReceiptCommand.ItemInfo(code, title, author, overdue, overdueDays));
-                }
-                command = new ReturnReceiptCommand(memberCode, memberName, timestamp, items);
-            }
+        // Erst in eine temporaere Datei schreiben, dann umbenennen: nie halbe Belege im Ordner
+        try (PrintWriter pw = new PrintWriter(new OutputStreamWriter(
+                Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW), StandardCharsets.UTF_8))) {
+            command.execute(pw);
+            if (pw.checkError()) throw new IOException("Schreibfehler in " + tmp);
+        }
+        Files.move(tmp, target);
+        return target;
+    }
 
-            if (command != null) {
-                // Dateiname: quittung_[timestamp]_[mitglieds_code]_[type].txt
-                String filename = String.format("quittung_%d_%s_%s.txt", timestamp, memberCode, commandType.toLowerCase());
-                File file = new File(printDir, filename);
-                try (PrintWriter pw = new PrintWriter(new FileWriter(file))) {
-                    command.execute(pw);
-                    System.out.println("Quittung erfolgreich gedruckt: " + file.getName());
-                }
-            } else {
-                System.err.println("Unbekannter commandType: " + commandType);
-            }
-        } catch (Exception e) {
-            System.err.println("Fehler beim Verarbeiten des Druckauftrags: " + e.getMessage());
-            e.printStackTrace();
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            running = false;
         }
     }
 }
